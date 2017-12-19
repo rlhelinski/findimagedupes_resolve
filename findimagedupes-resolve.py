@@ -30,8 +30,10 @@ def format_size(size):
 def curate_group(group):
     existing_files = []
     for index, path in enumerate(group):
+        sys.stdout.write('.'); sys.stdout.flush()
         if os.path.isfile(path):
             existing_files.append(group[index])
+    sys.stdout.write('\n')
     group = existing_files
     if len(group) < 2:
         print ('Singular or empty group')
@@ -57,10 +59,10 @@ for group_i, group in enumerate(groups):
         continue
     for path in group:
         if os.path.isfile(path):
-            sys.stdout.write('.')
-            sys.stdout.flush()
+            sys.stdout.write('.'); sys.stdout.flush()
             jpeginfo = Popen(['jpeginfo', '-c', path], stdout=PIPE).communicate()[0]
             jpeginfo_d[path] = jpeginfo.strip()
+    sys.stdout.write('\n')
 
     while True:
         try:
@@ -68,13 +70,14 @@ for group_i, group in enumerate(groups):
         except Exception:
             break
 
-        print ('%d files in group %d/%d:' % (len(group), group_i, len(groups)))
+        print ('%d files in group %d/%d:' % (len(group), group_i+1, len(groups)))
         for index, path in enumerate(group):
-# TODO this could be done by a module
+# TODO this could be done faster by a module
             print ('%3d: %s (%s)' % (index,
                                      jpeginfo_d[path],
                                      format_size(os.path.getsize(path))))
         resp = raw_input('Action: ')
+# TODO make opening images in 'eog' an option
         if resp.startswith('d'):
             try:
                 select_index = int(resp[1:])
