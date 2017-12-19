@@ -3,6 +3,13 @@ import os
 import sys
 from subprocess import Popen, PIPE
 
+import argparse
+parser = argparse.ArgumentParser(
+    description='reconcile output from the `findimagedupes` program')
+parser.add_argument(
+    'logfile')
+args = parser.parse_args()
+
 def format_size(size):
     prefix = {
         0: '',
@@ -32,7 +39,7 @@ def curate_group(group):
     group = sorted(group, key=lambda path: os.path.basename(path))
     return group
 
-with open("findimagedupes-mac.log", 'r') as f:
+with open(args.logfile, 'r') as f:
     lines = f.readlines()
 
 groups = []
