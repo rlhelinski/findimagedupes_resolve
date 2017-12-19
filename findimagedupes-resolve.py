@@ -35,8 +35,11 @@ def curate_group(group):
             existing_files.append(group[index])
     sys.stdout.write('\n')
     group = existing_files
-    if len(group) < 2:
-        print ('Singular or empty group')
+    if len(group) == 1:
+        print ('Singular group')
+        raise Exception()
+    if len(group) == 0:
+        print ('Empty group')
         raise Exception()
     group = sorted(group, key=lambda path: os.path.basename(path))
     return group
@@ -52,6 +55,8 @@ for line in lines:
     groups.append(paths)
 
 for group_i, group in enumerate(groups):
+    if len(group) > 100:
+        print ('Group %d has %d files, skipping' % (group_i+1, len(group)))
     jpeginfo_d = {}
     try:
         group = curate_group(group)
@@ -86,6 +91,8 @@ for group_i, group in enumerate(groups):
             print ('Deleting "%s"' % group[select_index])
             os.system('gvfs-trash "%s"' % group[select_index])
             del group[select_index]
+        elif resp.startswith('q'):
+            raise KeyboardInterrupt
         else:
             print ('Continuing')
             break
