@@ -124,12 +124,6 @@ if __name__ == '__main__':
             elif resp.lower().startswith('n'):
                 break
             elif resp.lower().startswith('v'):
-                #result_path = tempfile.mktemp()
-                #p = Popen(['compare']+group, shell=True)
-                #pid, sts = os.waitpid(p.pid, 0)
-                #p = Popen(['display', result_path], shell=True)
-                #for imgpath in group:
-                    #Popen(['display', imgpath], shell=True)
                 Popen(['eog']+group)
             elif resp.lower().startswith('ss'):
                 skip_sequential = True
