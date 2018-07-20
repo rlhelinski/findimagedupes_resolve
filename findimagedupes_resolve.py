@@ -2,8 +2,34 @@ from __future__ import print_function
 import os
 import sys
 from subprocess import Popen, PIPE
+import configparser
 
 import argparse
+
+class ConfigManager:
+    'Load and save user data'
+
+    def __init__(self, file_path):
+        self.file_path = file_path
+        self.config = configparser.RawConfigParser()
+        if (os.path.isfile(self.file_path)):
+            self.load()
+        else:
+            self.load_defaults()
+
+    def __del__(self):
+        self.save()
+
+    def load(self):
+        self.config.read(self.file_path)
+
+    def load_defaults(self):
+        pass
+
+    def save(self):
+        with open(self.file_path, 'w') as configfile:
+            self.config.write(configfile)
+
 
 def format_size(size):
     prefix = {
@@ -21,6 +47,7 @@ def format_size(size):
     if exp == 0:
         return '%d B' % size
     return '%.3f %sB' % (size, prefix[exp])
+
 
 def curate_group(group, skip_sequential=False):
     existing_files = []
@@ -48,6 +75,7 @@ def path_get_serial(path):
     else:
         return int(filename.split('.')[0])
 
+
 def remove_sequential(group):
     group = sorted(group)
     subset = [group[0]]
@@ -62,14 +90,18 @@ def remove_sequential(group):
 
     return subset
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='reconcile output from the `findimagedupes` program')
     parser.add_argument(
         'logfile')
     args = parser.parse_args()
+
     with open(args.logfile, 'r') as f:
         lines = f.readlines()
+
+    cm = ConfigManager(args.logfile+'.ini')
 
     groups = []
 
@@ -81,6 +113,11 @@ if __name__ == '__main__':
     skip_sequential = False
 
     for group_i, group in enumerate(groups):
+        if 'resume' in cm.config:
+            if group_i < int(cm.config['resume']['group']):
+                print(group_i, cm.config['resume']['group'])
+                continue
+
         if len(group) > 100:
             print ('Group %d has %d files, skipping' % (group_i+1, len(group)))
         jpeginfo_d = {}
@@ -134,3 +171,6 @@ if __name__ == '__main__':
                 print('n: proceed to next file group')
                 print('ss: skip sequential files')
                 print('q: quit')
+
+        cm.config['resume'] = {'group': group_i}
+        cm.save()
