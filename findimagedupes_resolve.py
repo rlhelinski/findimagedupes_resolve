@@ -3,8 +3,18 @@ import os
 import sys
 from subprocess import Popen, PIPE
 import configparser
+import PIL.Image
+import PIL.ExifTags
 
 import argparse
+
+class CurateException(Exception):
+    pass
+
+
+class GetSerialError(Exception):
+    pass
+
 
 class ConfigManager:
     'Load and save user data'
@@ -52,28 +62,51 @@ def format_size(size):
 def curate_group(group, skip_sequential=False):
     existing_files = []
     for index, path in enumerate(group):
-        sys.stdout.write('.'); sys.stdout.flush()
         if os.path.isfile(path):
+            sys.stdout.write('.'); sys.stdout.flush()
             existing_files.append(group[index])
+        else:
+            sys.stdout.write('x')
     sys.stdout.write('\n')
-    group = existing_files
+    group = existing_files #.copy()
     if skip_sequential:
-        group = remove_sequential(group)
+        try:
+            group = remove_sequential(group)
+        except GetSerialError:
+            print('Failed to detect serial numbers')
+            pass
+    if True:
+# skip files in same directory with similar timestamps
+        try:
+            group = remove_close_times(group)
+        except GetSerialError:
+            pass
     if len(group) == 1:
         print ('Singular group')
-        raise Exception()
+        raise CurateException()
     if len(group) == 0:
         print ('Empty group')
-        raise Exception()
+        raise CurateException()
     group = sorted(group, key=lambda path: os.path.basename(path))
     return group
 
+
 def path_get_serial(path):
     filename = os.path.basename(path)
-    if filename[3] == '_':
+    filename, ext = os.path.splitext(filename)
+    if len(filename) == 8 and (filename[:4].lower() in ['dsc_', 'gopr', 'img_', 'dscn']):
         return int(filename[4:8])
+    elif len(filename) == 28 and filename[20:24].lower() in ['dscn', 'dsc_']:
+        return int(filename[24:28])
+    elif len(filename) >= 22 and filename[:4].lower() == 'img_':
+# Truncate timestamp to the minute
+        #return int(filename[4:12]+filename[13:22])
+        return int(filename[4:12]+filename[13:17])
     else:
-        return int(filename.split('.')[0])
+        try:
+            return int(filename)
+        except ValueError:
+            raise GetSerialError()
 
 
 def remove_sequential(group):
@@ -82,6 +115,7 @@ def remove_sequential(group):
     last_serial = path_get_serial(group[0])
     for index, path in enumerate(group[1:]):
         serial_number = path_get_serial(path)
+        print(serial_number)
         if serial_number - last_serial != 1:
             subset.append(path)
         else:
@@ -91,11 +125,38 @@ def remove_sequential(group):
     return subset
 
 
+def path_get_timestamp(path):
+    filename = os.path.basename(path)
+    filename, ext = os.path.splitext(filename)
+    if len(filename) >= 22 and filename[:4].lower() == 'img_':
+        timestamp = int(filename[4:12]+filename[13:22])
+        print('timestamp:', timestamp)
+        return timestamp
+
+    raise GetSerialError()
+
+
+def remove_close_times(group):
+    group = sorted(group)
+    subset = [group[0]]
+    last_timestamp = path_get_timestamp(group[0])
+    for index, path in enumerate(group[1:]):
+        timestamp = path_get_timestamp(path)
+        print ('difference', (timestamp - last_timestamp))
+        if (timestamp - last_timestamp) < 100000:
+            print('Ignoring '+path)
+        else:
+            subset.append(path)
+        last_timestamp = timestamp
+
+    return subset
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='reconcile output from the `findimagedupes` program')
-    parser.add_argument(
-        'logfile')
+    parser.add_argument('logfile')
+    parser.add_argument('--skip-sequential', action='store_true', default=False)
     args = parser.parse_args()
 
     with open(args.logfile, 'r') as f:
@@ -110,37 +171,80 @@ if __name__ == '__main__':
         paths = [paths[0]] + ['/'+path for path in paths[1:]]
         groups.append(paths)
 
-    skip_sequential = False
-
     for group_i, group in enumerate(groups):
         if 'resume' in cm.config:
             if group_i < int(cm.config['resume']['group']):
-                print(group_i, cm.config['resume']['group'])
                 continue
 
+        sys.stdout.write('group %d '%group_i)
         if len(group) > 100:
             print ('Group %d has %d files, skipping' % (group_i+1, len(group)))
         jpeginfo_d = {}
+        exifinfo_d = {}
         try:
             group = curate_group(group)
-        except Exception:
+        except CurateException:
             continue
         for path in group:
             if os.path.isfile(path):
                 sys.stdout.write('.'); sys.stdout.flush()
-                jpeginfo = Popen(['jpeginfo', '-c', path],
-                                 stdout=PIPE).communicate()[0]
-                jpeginfo_d[path] = jpeginfo.strip()
+                filesize = os.stat(path).st_size
+                try:
+                    img = PIL.Image.open(path)
+                    width, height = img.size
+                    exif = img._getexif() if img.format == 'JPEG' else None
+                    if exif:
+                        if 36867 in exif:
+                            origdatetime = exif[36867]
+                        elif 306 in exif:
+                            origdatetime = exif[306]
+                        else:
+                            origdatetime = ''
+                        if 37521 in exif:
+                            origdatetime += ' '+exif[37521]
+                    else:
+                        origdatetime = ''
+                    jpeginfo_d[path] = '%s %dx%d %s %d' % (path, width, height, origdatetime, filesize)
+                    exifinfo_d[path] = {'origdatetime': origdatetime}
+                except IOError:
+                    jpeginfo_d[path] = '%s %d' % (path, filesize)
+            else:
+                sys.stdout.write('x')
         sys.stdout.write('\n')
+
+        if len(group)==2 \
+                and (group[0] in exifinfo_d and \
+                     group[1] in exifinfo_d) \
+                and (exifinfo_d[group[0]]['origdatetime'] == \
+                     exifinfo_d[group[1]]['origdatetime']):
+            target = 0
+            while target < len(group):
+                if 'Pictures/iPhoto/' in group[target]:
+                    break
+                if 'XT1254/bluetooth/' in group[target]:
+                    break
+                target += 1
+            keep_target = 0 if target==1 else 1
+            if target < len(group) and \
+                    'Pictures/iPhoto' not in group[keep_target] and \
+                    'XT1254/bluetooth/' not in group[keep_target]:
+                for path in group:
+                    print(jpeginfo_d[path])
+                print('Going to delete '+group[target])
+                resp = raw_input('Does this look right?')
+                if resp.startswith('y'):
+                    os.system('gvfs-trash "%s"' % group[target])
+                    del group[target]
 
         while True:
             try:
-                group = curate_group(group, skip_sequential)
-            except Exception:
+                group = curate_group(group, args.skip_sequential)
+            except CurateException:
                 break
 
             print ('%d files in group %d/%d:' % (len(group), group_i+1,
                                                  len(groups)))
+
             for index, path in enumerate(group):
 # TODO this could be done faster by a module
                 print ('%3d: %s (%s)' % (index,
@@ -163,7 +267,7 @@ if __name__ == '__main__':
             elif resp.lower().startswith('v'):
                 Popen(['eog']+group)
             elif resp.lower().startswith('ss'):
-                skip_sequential = True
+                args.skip_sequential = True
             else:
                 print('Commands:')
                 print('v: visualize')
