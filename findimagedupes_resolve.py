@@ -111,6 +111,8 @@ def path_get_serial(path):
 
 def remove_sequential(group):
     group = sorted(group)
+    if not group:
+        return []
     subset = [group[0]]
     last_serial = path_get_serial(group[0])
     for index, path in enumerate(group[1:]):
@@ -138,6 +140,8 @@ def path_get_timestamp(path):
 
 def remove_close_times(group):
     group = sorted(group)
+    if not group:
+        return []
     subset = [group[0]]
     last_timestamp = path_get_timestamp(group[0])
     for index, path in enumerate(group[1:]):
@@ -179,6 +183,7 @@ if __name__ == '__main__':
         sys.stdout.write('group %d '%group_i)
         if len(group) > 100:
             print ('Group %d has %d files, skipping' % (group_i+1, len(group)))
+            continue
         jpeginfo_d = {}
         exifinfo_d = {}
         try:
@@ -204,10 +209,10 @@ if __name__ == '__main__':
                             origdatetime += ' '+exif[37521]
                     else:
                         origdatetime = ''
-                    jpeginfo_d[path] = '%s %dx%d %s %d' % (path, width, height, origdatetime, filesize)
+                    jpeginfo_d[path] = '%dx%d %s %d' % (width, height, origdatetime, filesize)
                     exifinfo_d[path] = {'origdatetime': origdatetime}
                 except IOError:
-                    jpeginfo_d[path] = '%s %d' % (path, filesize)
+                    jpeginfo_d[path] = '%d' % (filesize)
             else:
                 sys.stdout.write('x')
         sys.stdout.write('\n')
@@ -228,13 +233,15 @@ if __name__ == '__main__':
             if target < len(group) and \
                     'Pictures/iPhoto' not in group[keep_target] and \
                     'XT1254/bluetooth/' not in group[keep_target]:
+                max_path_len = max(map(len, group))
                 for path in group:
-                    print(jpeginfo_d[path])
-                print('Going to delete '+group[target])
-                resp = raw_input('Does this look right?')
+                    print('%-*s %s' % (max_path_len, path, jpeginfo_d[path]))
+                print('\nGoing to delete '+group[target])
+                resp = raw_input('Does this look right? ')
                 if resp.startswith('y'):
-                    os.system('gvfs-trash "%s"' % group[target])
-                    del group[target]
+                    retval = os.system('gvfs-trash \'%s\'' % group[target])
+                    if retval == 0:
+                        del group[target]
 
         while True:
             try:
@@ -245,21 +252,43 @@ if __name__ == '__main__':
             print ('%d files in group %d/%d:' % (len(group), group_i+1,
                                                  len(groups)))
 
+            max_path_len = max(map(len, group))
             for index, path in enumerate(group):
 # TODO this could be done faster by a module
-                print ('%3d: %s (%s)' % (index,
+                print ('%3d: %-*s %s (%s)' % (index,
+                                         max_path_len,
+                                         path,
                                          jpeginfo_d[path],
                                          format_size(os.path.getsize(path))))
             resp = raw_input('Action: ')
-# TODO make opening images in 'eog' an option
             if resp.startswith('d'):
                 try:
                     select_index = int(resp[1:])
                 except ValueError as e:
                     print (str(e))
-                print ('Deleting "%s"' % group[select_index])
-                os.system('gvfs-trash "%s"' % group[select_index])
-                del group[select_index]
+                else:
+                    print ('Deleting "%s"' % group[select_index])
+                    retval = os.system('gvfs-trash \'%s\'' % group[select_index])
+                    if retval == 0:
+                        del group[select_index]
+            elif resp.lower().startswith('c'):
+                try:
+                    select_index = int(resp[1:])
+                except ValueError as e:
+                    print (str(e))
+                else:
+                    oldpath = group[select_index]
+                    jpg_name = oldpath.replace('.tiff', '.jpg')
+                    jpg_name = jpg_name.replace('.tif', '.jpg')
+                    print ('Converting "%s" to "%s"' % (oldpath, jpg_name))
+                    retval = os.system('convert -quality 95 \'%s\' \'%s\'' % (oldpath, jpg_name))
+                    if retval == 0:
+                        retval2 = os.system('gvfs-trash \'%s\'' % oldpath)
+                    #if not os.path.isfile(oldpath) and os.path.isfile(jpg_name):
+                    if retval2 == 0:
+                        jpeginfo_d[jpg_name] = jpeginfo_d[oldpath]
+                        group[select_index] = jpg_name
+                        del jpeginfo_d[oldpath]
             elif resp.lower().startswith('q'):
                 raise KeyboardInterrupt
             elif resp.lower().startswith('n'):
@@ -272,6 +301,7 @@ if __name__ == '__main__':
                 print('Commands:')
                 print('v: visualize')
                 print('d[index]: delete file specified by index')
+                print('c[index]: convert file specified by index to JPEG')
                 print('n: proceed to next file group')
                 print('ss: skip sequential files')
                 print('q: quit')
